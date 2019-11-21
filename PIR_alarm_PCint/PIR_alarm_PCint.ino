@@ -1,33 +1,41 @@
 /*  For MySensor library  V2.1.1 and built under Arduino 1.8.2
  *  
- *  Sketch for a PIR sensor that runs on 2 AA batteries 
+ *  Sketch for a PIR sensor that runs on 2 AA batteries for >2 years, 
+ *	See also similar project Wire_Trip_alarm.ino
+ *  PCB can be ordered at OSHPCB search for "nrfMysensor" in shared projects, Eagle files at https://github.com/garyStofer/Eagle5_PCB/tree/master/nRF_Mysensor
  */
 
 #include <EEPROM.h>
-#define MY_DEBUG            // turns on Mysensor library debug output
+//#define MY_DEBUG            // turns on Mysensor library debug output
 #define MY_BAUD_RATE 57600    // slow down because this node runs at 8Mhz 
 #include <MyRadio_NRF24.h>    // Enables NRF24 transport and contains the PAN_ID plus channel number for the radios
 // #define MY_NODE_ID 12      // in case you want to make it a specific node ID instead of getting one from the controller
 #include <MySensors.h>        // Requires MySensor v2.1.1 or higher 
  
-// NOTE: Uses PinChange interrupt feature on PortC so that sensor gets triggered on rising AND falling edge of PIR signal
-// Device is in full power shut down in between activations and should only take about 50ua
+ /*** S E E  N O T E  Below about a required fix to Mysensor library file MyHwAVR.cpp  to allow node to go into indefinite sleep mode ***/
+ 
+// NOTE: Uses PinChange interrupt feature on PortC so that sensor gets triggered on rising AND falling edge of PIR signal. (INT0/1 will only do one or the other on 328p)
+// Device is in full power shut down between activations and should take <50ua mostly due to the current consumption of the PIR modul.
+
 // Rising edge sets the alarm state, falling edge clears.  PIR device has trimmer to set the active time
+// Note that INT0 and INT1 do not provide interrupt capabilities for both falling and rising edges at the same time (pin change), only one or the other
+// and therefore these interrupts can not be used for implementing a sensor that both reports alarm on and alarm off states 
 
-// runs on 328p @3.3V @8mhz internal clock  -- standard or optiboot loader -- must have correct BL loaded for correct baudrate during programming
+// runs on 328p @3.3V @8mhz internal clock, 4ms startup delay, 1.8V BO -- standard or optiboot loader -- must have correct BL loaded for correct baudrate during programming
+// Set Fuses to: 0xFE,0XDE or 0xDA ,0xD2		( Bootloder size as per actual loaded version ) 
+
+
 /************************* IMPORTANT ************************************ */
-//    Must set Brownout voltage to 1.8V and internal clock 8mhz with 4ms startup delay using Atmel Studio programmer with ICE-MKII after loading Optiboot 32Pin bootloader.
+//    Must set Brownout voltage to 1.8V and internal clock 8mhz with 4ms startup delay using Atmel Studio programmer with ICE-MKII after loading bootloader.
 //    If Brownout voltage is left at default 2.7V battery will not be fully used up.
-//    If 8Mhz startup delay is left at 65 ms the bootloader will not properly connect when device was in sleep mode. 
+//    If 8Mhz CPU CLK source startup delay is left at 65 ms the bootloader will not properly connect to reprogram when device was in sleep mode. 
 //    A newer version of the Optiboot loader or modifying the defaults in baords.txt for the optiboot loader would also solve this
-// FUSES : 0xFE,0XDE,0xD2
- 
 
- 
-/* MySensor Node application for PIR motion sensor running on Mega328P powered by two AAA  Lithium or Alkaline cells .
-	Standby current consumption with PIR module attached is about 55uA.
+  
+/* MySensor Node application for PIR motion sensor running on Mega328P powered by 2 AAA  Lithium or 2 AA Alkaline cells .
+	Standby current consumption with PIR module attached is <50uA.
 
-	This Node will sleep until a pin change is detected on the PIR status pin. The Node then reports true or false depending on the
+	This Node will sleep until a pin change is detected on the PIR_SIGNAL_PIN. The Node then reports true or false (alarm ON/OFF) depending on the
 	state of the PIR signal output, thus setting and clearing the alarm state.
 	The node also reports battery status every BATTERY_REPORT_FREQ time.
 
@@ -43,37 +51,36 @@
   -  Battery life expectancy with two AAA L92 is about 1 year if the sensor doesn't get triggered constantly.
 
   -- MUST set Brownout fuse to 1.8V in order to run battery sufficiently down, see above.
+  
+	See schematis in Eagle files at https://github.com/garyStofer/Eagle5_PCB/tree/master/nRF_Mysensor
+	PCB can be ordered at OSHPCB search for "nrfMysensor" in shared projects
 */
 
-/*  
- * For library debug messages enable "#define DEBUG" in MyCinfig.h -- Will not work if defined in this source file
-*/
 #define CHILD_1 1
 
 #define BATTERY_SENSOR_ANALOG_PIN 7  // ADC7, Mega328P device pin 22, this is ANALOG pin 7
 #define BATTERY_V_DIV_GND_PIN	  7	   // PD7, Mega328P device pin 11, this is DIGITAL pin 7  	
 
-#define SWITCH_PIN BATTERY_V_DIV_GND_PIN  // This is the same as the BATTERY_V_DIF_GND_PIN.  battery measure voltage divider serves as the pull-up for the switch
-#define LED_PIN		 			    8		          // PB0, Mega328P device pin 12
-#define PIR_SIGNAL_PIN 		  14   		      // PC0, aka ADC0, aka A0, Mega328P device pin 23  -- Do not move this pin -- Pin-Change code below sets up PC0 as input
+#define SWITCH_PIN BATTERY_V_DIV_GND_PIN    // This is the same as the BATTERY_V_DIF_GND_PIN.  battery measure voltage divider serves as the pull-up for the switch
+#define LED_PIN		 			    8		// PB0, Mega328P device pin 12
+#define PIR_SIGNAL_PIN 		  14   		    // PC0, aka ADC0, aka A0, Mega328P device pin 23  -- Do not move this pin -- Pin-Change code below sets up PC0 as input
 
 
 #define ADC_BITVALUE (1.1f / 1024)    // ADC using 1.1V internal reference
 #define ADC_BATTERY_DIV  (3.125f)     // external voltage divider ratio 1M:470K
 #define BATTERY_EMPTY (2.6f)
-#define BATTERY_FULL  (3.0f)
+#define BATTERY_FULL  (3.1f)
 #define BATTERY_REPORT_FREQ 12*2       // report the battery status only every 24th time for lower power consumption
 
 
 MyMessage msg(CHILD_1, V_TRIPPED);
 
 // Pin change interrupt to capture the event from the PIR sensor
-static  short AlarmInstances = -1; // init so that it sends the battery status on first alarm after startup
+static  short AlarmInstances = 0; // init so that it sends the battery status on first alarm after startup
 ISR(PCINT1_vect)
 {
 
-		// count alarm instances to send battery status every Nth time
-    AlarmInstances++;
+	// nothing to do except to wake up the cpu from sleep
 
 }
 //  presentation callback function for Mysensors
@@ -85,15 +92,14 @@ void presentation()  //  is called when the controller requests info about the n
   Serial.print("Sending Sketch name ");
   Serial.println(sketch);
   sendSketchInfo(sketch, "1.5");
- // Register all sensors to gateway (they will be created as child devices)
- present(CHILD_1, S_MOTION,false,"PIR_SENS");   // gives the sensor a meaningfull name so that domotics can display something upon discovery
+  // Register all sensors to gateway (they will be created as child devices)
+  present(CHILD_1, S_MOTION,false,"PIR_SENS");   // gives the sensor a meaningfull name so that domotics can display something upon discovery
 
 }
 
 // before callback funtion for Mysensors
 void before()		// executes before the radio starts up
 {
-  Serial.begin(57600);      
   Serial.println("Device Startup.");
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, HIGH);  // red LED
@@ -112,23 +118,10 @@ void before()		// executes before the radio starts up
 }
 void setup()
 {
-  // The constructor of class MySensor sets the baudrate to 115200 as defined in MyConfig.h, this however doesnt work for a node 
-  // that runs on 3V and its internal 8MHZ oscillator, therefore lowering the baud rate here. This causes "garbage" to appear on the 
-  // serial terminal during the startup of the node as the MySensor class constructor sends out some diagnostic at 115200 beforehand
-  // Serial.begin(115200); // Lowering the baud rate since these nodes are running with 8MHZ internal osc. @3V
-  
-
-
-  // must have node.begin after the EEProm erase, otherwise it will always use the old ID 
-  //node.begin(NULL,3);         // fixed node ID -- will be stored in EEPROM if executed
-  //node.begin(NULL,6,false,0); // No receive function, myNodeId =n, NoRepeater,myParentId =0  
-  // node.begin();               // this gets a node ID from the controller if EEPROM is empty or previous parent is dead    
- //  Serial.flush();            // up to here is 115200 baud from MySensor constructor
- //  Serial.begin(57600);       // slow down because 8Mhz
-      
 
   Serial.print("\nSensor setup() -- Node ID:");
   Serial.println( getNodeId() );
+  Serial.flush();
 
 
   pinMode(BATTERY_V_DIV_GND_PIN, INPUT);
@@ -159,18 +152,29 @@ void loop()
 
   pinMode(LED_PIN, INPUT);			// LEDS off
 
+/***  Required fix in library file MyHwAAVR.cpp -- This feature got broken betweenv1.5 and 2.1 of Mysensor lib
+This relies on a fix in the MySensor library file "MyHwAVR.cpp" at line 154, allowing 0 ms sleep to do a power down until outside interrupt (pinChange) brings system out of sleep
+as documented here:
+										int8_t hwSleep(unsigned long ms)
+										{
+			-->> fix						if (ms>0) {
+												// sleep for defined time
+												hwInternalSleep(ms);
+												return MY_WAKE_UP_BY_TIMER;
+			-->> fix						} else {  // Fix for missing feature that allowed (in 1.5.1) to use the pin chnage interrupt with a sleep(0) to completely power down the system
+			-->> fix   							// sleep until ext interrupt triggered
+			-->> fix							hwPowerDown(SLEEP_FOREVER);
+			-->> fix							return 0;
+			-->> fix						}
+										}
+***/
 
-  // The NODE sleeps here until pin-change happens -- This requires a 328P as in a PicoPower device -- Pinchnage interrupt on portC pin is enabled in the setup(). 
- /*  workaround for (2.1.1) sleep(0) not working as documented. -- sleep(0) returns immediatly instead of executingan indefenetly power down until woken up by interrupt. 
-  *  Using the sub function hwSleep with null nargumnets for Interrupts however does the expected powerdown when called with 0ms. 
-  *  The serial buffer needs to be flushed before going to sleep as otherwise the buffer contents are lost
-  *  
-  */
-  Serial.flush();
-  hwSleep(INVALID_INTERRUPT_NUM,0,0);
+
+  // The NODE sleeps here until pin-change happens -- This requires a 328P as in a PicoPower device -- Pinchnage interrupt on portC pin is discretly enabled in the setup(). 
+  sleep(0);	 
   // when "HERE" the node woke up because of the pin change interrupt
-
- 
+  delay(50); // in case the signal pin bounces
+  
   if (digitalRead(PIR_SIGNAL_PIN) )	//Rising edge of PIR status signal. i.e. tripped
   {
     Serial.print("PIR Set\n");
@@ -188,16 +192,16 @@ void loop()
     Serial.print("failed to HW-ack\n");
     digitalWrite(LED_PIN, HIGH);  // set the red LED indicating failure to communicate with parent (gateway or router)
     pinMode(LED_PIN, OUTPUT);    // LEDS on
-    wait(300);              // so I can see it
+    delay(300);              // so I can see it
     return;
   }
 
 
  
   // send Battery status every Nth time
-  if (AlarmInstances % BATTERY_REPORT_FREQ==0 ) // 
+  if (AlarmInstances++ % BATTERY_REPORT_FREQ==0 ) // 
   {
-    Serial.print("Battery Percent: ");
+    Serial.print("Battery Volt,Percent: ");
                
     // setup the voltage divider for the battery measurement
     digitalWrite(BATTERY_V_DIV_GND_PIN, LOW);   // bottom of V-divider for battery measurement
@@ -205,22 +209,23 @@ void loop()
 
     pinMode(LED_PIN, OUTPUT);
     digitalWrite(LED_PIN, LOW);	// white LED on for battery load
-	  wait(500);  // for cap charge up
+	delay(500);  // for cap charge up
 
     ADC_count = analogRead(BATTERY_SENSOR_ANALOG_PIN);
     pinMode(LED_PIN, INPUT);		// LEDS off again
 
     BatteryV = ADC_count *  ADC_BITVALUE * ADC_BATTERY_DIV;
     BatteryPcnt = 100 * (BatteryV - BATTERY_EMPTY) / (BATTERY_FULL - BATTERY_EMPTY);
-
+	Serial.print(BatteryV);
+	Serial.print(", ");
+	Serial.println(BatteryPcnt);
+	
     if (BatteryPcnt > 100 )
       BatteryPcnt = 100;
 
     if (BatteryPcnt < 0 )
       BatteryPcnt = 0;
-  
-    Serial.println(BatteryPcnt);
-    
+   
     pinMode(BATTERY_V_DIV_GND_PIN, INPUT);      // deactivate the voltage divider by letting it float
 
     sendBatteryLevel(BatteryPcnt);
