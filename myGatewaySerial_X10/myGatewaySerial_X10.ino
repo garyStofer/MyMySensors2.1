@@ -74,7 +74,7 @@
 #define MY_DEFAULT_LED_BLINK_PERIOD 300
 
 // Inverses the behavior of leds
-//#define MY_WITH_LEDS_BLINKING_INVERSE
+#define MY_WITH_LEDS_BLINKING_INVERSE
 
 // Flash leds on rx/tx/err
 // Uncomment to override default HW configurations
@@ -198,7 +198,7 @@ void setup()
 void presentation()
 {
 	// Present 12 locally attached X10 actuators -- max is 16
-  sendSketchInfo("mySensorsGatewayWithX10", "2.11");
+  sendSketchInfo("mySensorsGatewayWithX10", "2.1.1");
   present(CHILD_X10_1, S_BINARY);
   present(CHILD_X10_1+1, S_BINARY);
   present(CHILD_X10_1+2, S_BINARY);
