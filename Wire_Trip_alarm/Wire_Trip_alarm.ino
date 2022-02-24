@@ -9,7 +9,7 @@
 //#define MY_DEBUG            // turns on Mysensor library debug output
 #define MY_BAUD_RATE 57600    // slow down because this node runs at 8Mhz 
 #include <MyRadio_NRF24.h>    // Enables NRF24 transport and contains the PAN_ID plus channel number for the radios
-// #define MY_NODE_ID 12      // in case you want to make it a specific node ID instead of getting one from the controller, EEPROM reset is required to register the new ID
+//#define MY_NODE_ID 12      // in case you want to make it a specific node ID instead of getting one from the controller, EEPROM reset is required to register the new ID
 #include <MySensors.h>        // Requires MySensor v2.1.1 or higher 
 
 /*** S E E  N O T E  Below about a required fix to Mysensor library file MyHwAVR.cpp  to allow node to go into indefinite sleep mode ***/
@@ -52,20 +52,20 @@
 
 #define CHILD_1 1
 
-#define BATTERY_SENSOR_ANALOG_PIN 7  // ADC7, Mega328P device pin 22, this is ANALOG pin 7
+#define BATTERY_SENSOR_ANALOG_PIN 7// ADC7, Mega328P device pin 22, this is ANALOG pin 7
 #define BATTERY_V_DIV_GND_PIN	  7	 // PD7, Mega328P device pin 11, this is DIGITAL pin 7  	
 
 #define SWITCH_PIN BATTERY_V_DIV_GND_PIN  // This is the same as the BATTERY_V_DIF_GND_PIN.  battery measure voltage divider serves as the pull-up for the switch
-#define LED_PIN		 			    8	  // PB0, Mega328P device pin 12
-#define Signal_PIN 		  	   		14     // PC0, aka ADC0, aka A0, Mega328P device pin 23  -- Do not move this pin -- Pin-Change code below sets up PC0 as input
+#define LED_PIN		 			    8	    // PB0, Mega328P device pin 12
+#define Signal_PIN 		  	  14    // PC0, aka ADC0, aka A0, Mega328P device pin 23  -- Do not move this pin -- Pin-Change code below sets up PC0 as input
 
 
 #define ADC_BITVALUE (1.1f / 1024)    // ADC using 1.1V internal reference
 #define ADC_BATTERY_DIV  (3.125f)     // external voltage divider ratio 1M:470K
 #define BATTERY_EMPTY (2.6f)
-#define BATTERY_FULL  (3.1f)		 // A brand new Alkaline battery has about 1.6V 
-#define BATTERY_REPORT_INTERVAL 0   // report the battery status only every nth cycle for lower power consumption on trip wire with door or window switch
-									 // set this number to low number or 0 if there is no door or window switch in the trip wire
+#define BATTERY_FULL  (3.15f)		    // A brand new Alkaline battery has about 1.6V 
+#define BATTERY_REPORT_INTERVAL 1   // report the battery status only every nth cycle for lower power consumption on trip wire with door or window switch
+									                  // set this number to low number or 1 if there is no door or window switch in the trip wire tat frequently activates the node
 
 MyMessage msg(CHILD_1, V_TRIPPED);
 
@@ -92,7 +92,7 @@ void presentation()  //  is called when the controller requests info about the n
 void before()		// executes before the radio starts up
 {
 
-  Serial.println("Device Startup.");
+  Serial.println("Device Startup Wiretrip sensor.");
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, HIGH);  // red LED
   pinMode(SWITCH_PIN, INPUT);
@@ -101,15 +101,19 @@ void before()		// executes before the radio starts up
   if (digitalRead( SWITCH_PIN ) == 0 )
   {
     Serial.print("Erasing EEPROM\n");
+   
     for (int i = 0; i < 512; i++)
       EEPROM.write(i, 0xff);
 
     Serial.println("Clearing of EEprom complete.");
   }
-  digitalWrite(LED_PIN, LOW);  // white LED
+  digitalWrite(LED_PIN, LOW);  // white or blue LED
 }
-void setup()
+void setup() // after Radio connected 
 {
+  digitalWrite(LED_PIN, HIGH);  // RED LED
+  Serial.println("Device Setup");
+  Serial.flush();
 
   Serial.print("\nWiretrip Sensor setup() -- Node ID:");
   Serial.println( getNodeId() );
@@ -184,7 +188,7 @@ as documented here:
   if (!send(msg, false))    // this returns the state of the HW ACK to the next node (1st hop) -- this only works for single hop networks,
                             // second argument is protocol level ACK, but that requires that the message receive function is implemented and the recived message is checked.
   {
-    Serial.print("failed to HW-ack\n");
+    Serial.print("Failed to HW-ack\n");
     digitalWrite(LED_PIN, HIGH);  	// set the red LED indicating failure to communicate with parent (gateway or router)
     pinMode(LED_PIN, OUTPUT);    	// LEDS on
     delay(300);              		// so I can see it
@@ -205,25 +209,23 @@ as documented here:
 
     pinMode(LED_PIN, OUTPUT);
     digitalWrite(LED_PIN, LOW);	// white LED on for battery load
-	delay(500);  // for cap charge up
+	  delay(500);  // for cap charge up
 
     ADC_count = analogRead(BATTERY_SENSOR_ANALOG_PIN);
     pinMode(LED_PIN, INPUT);		// LEDS off again
 
     BatteryV = ADC_count *  ADC_BITVALUE * ADC_BATTERY_DIV;
-	Serial.print(BatteryV);
-	Serial.print(", ");
+	  Serial.print(BatteryV);
+	  Serial.print(", ");
     BatteryPcnt = 100 * (BatteryV - BATTERY_EMPTY) / (BATTERY_FULL - BATTERY_EMPTY);
-	Serial.println(BatteryPcnt);
+	  Serial.println(BatteryPcnt);
 
     if (BatteryPcnt > 100 )
       BatteryPcnt = 100;
 
     if (BatteryPcnt < 0 )
       BatteryPcnt = 0;
-  
-    
-    
+
     pinMode(BATTERY_V_DIV_GND_PIN, INPUT);      // deactivate the voltage divider by letting it float
 
     sendBatteryLevel(BatteryPcnt);
