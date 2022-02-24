@@ -64,7 +64,7 @@
 #define ADC_BATTERY_DIV  (3.125f)     // external voltage divider ratio 1M:470K
 #define BATTERY_EMPTY (2.6f)
 #define BATTERY_FULL  (3.1f)		 // A brand new Alkaline battery has about 1.6V 
-#define BATTERY_REPORT_INTERVAL 24   // report the battery status only every nth cycle for lower power consumption on trip wire with door or window switch
+#define BATTERY_REPORT_INTERVAL 0   // report the battery status only every nth cycle for lower power consumption on trip wire with door or window switch
 									 // set this number to low number or 0 if there is no door or window switch in the trip wire
 
 MyMessage msg(CHILD_1, V_TRIPPED);
